@@ -1,12 +1,11 @@
+import threading
+import time
 from collections import UserList
-import asyncio
-import inspect
 from typing import Optional, Callable, TYPE_CHECKING
 from edsl import QuestionFreeText, Results, AgentList, ScenarioList, Scenario
 from edsl.questions import QuestionBase
 from edsl.results.result import Result
 from jinja2 import Template
-from edsl.caching import Cache
 
 if TYPE_CHECKING:
     from edsl import Model
@@ -54,12 +53,12 @@ class AgentStatements(UserList):
 
 
 class Conversation:
-    """A conversation between a list of agents. The first agent in the list is the first speaker.
-    After that, order is determined by the next_speaker function.
-    The question asked to each agent is determined by the next_statement_question.
+    """A conversation between a list of agents.
 
-    If the user has passed in a "per_round_message_template", this will be displayed at the beginning of each round.
-    {{ round_message }} must be in the question_text.
+    Each turn is run as a normal edsl job (background=False) or dispatched to
+    Coop and polled until complete (background=True).  ConversationList runs
+    multiple conversations in parallel using threads, so no local event loop
+    is required.
     """
 
     def __init__(
@@ -73,18 +72,15 @@ class Conversation:
         per_round_message_template: Optional[str] = None,
         conversation_index: Optional[int] = None,
         cache=None,
-        disable_remote_inference=False,
         default_model: Optional["Model"] = None,
     ):
-        self.disable_remote_inference = disable_remote_inference
+        self.cache = cache
         self.per_round_message_template = per_round_message_template
-
-        if cache is None:
-            self.cache = Cache()
-        else:
-            self.cache = cache
-
         self.agent_list = agent_list
+        self.verbose = verbose
+        self._conversation_index = conversation_index
+        self.agent_statements = AgentStatements()
+        self.max_turns = max_turns
 
         for agent in self.agent_list:
             if not hasattr(agent, "model"):
@@ -92,22 +88,13 @@ class Conversation:
                     agent.model = default_model
                 else:
                     from edsl import Model
-
                     agent.model = Model()
-
-        self.verbose = verbose
-        self.agent_statements = []
-        self._conversation_index = conversation_index
-        self.agent_statements = AgentStatements()
-
-        self.max_turns = max_turns
 
         if next_statement_question is None:
             import textwrap
-
             base_question = textwrap.dedent(
                 """\
-You are {{ agent_name }}. This is the conversation so far: {{ conversation }}
+You are {{ speaker_name }}. This is the conversation so far: {{ conversation }}
 {% if round_message is not none %}
 {{ round_message }}
 {% endif %}
@@ -124,38 +111,28 @@ What do you say next?"""
                 and "{{ round_message }}" not in next_statement_question.question_text
             ):
                 from .exceptions import ConversationValueError
-
                 raise ConversationValueError(
                     "If you pass in a per_round_message_template, you must include {{ round_message }} in the question_text."
                 )
 
-        # Determine how the next speaker is chosen
         if next_speaker_generator is None:
             func = default_turn_taking_generator
         else:
             func = next_speaker_generator
 
-        # Choose the next speaker
         self.next_speaker = speaker_closure(
             agent_list=self.agent_list, generator_function=func
         )
 
-        # Determine when the conversation ends
         if stopping_function is None:
             self.stopping_function = lambda agent_statements: False
         else:
             self.stopping_function = stopping_function
 
-    async def continue_conversation(self, **kwargs) -> bool:
+    def _should_continue(self) -> bool:
         if len(self.agent_statements) >= self.max_turns:
             return False
-
-        if inspect.iscoroutinefunction(self.stopping_function):
-            should_stop = await self.stopping_function(self.agent_statements, **kwargs)
-        else:
-            should_stop = self.stopping_function(self.agent_statements, **kwargs)
-
-        return not should_stop
+        return not self.stopping_function(self.agent_statements)
 
     def add_index(self, index) -> None:
         self._conversation_index = index
@@ -163,6 +140,65 @@ What do you say next?"""
     @property
     def conversation_index(self):
         return self._conversation_index
+
+    def _build_job(self, *, index, speaker, conversation):
+        q = self.next_statement_question
+
+        if self.per_round_message_template is None:
+            round_message = None
+        else:
+            round_message = Template(self.per_round_message_template).render(
+                {"max_turns": self.max_turns, "current_turn": index}
+            )
+
+        s = Scenario(
+            {
+                "speaker_name": speaker.name,
+                "conversation": conversation,
+                "conversation_index": self.conversation_index,
+                "index": index,
+                "round_message": round_message,
+            }
+        )
+        return q.by(s).by(speaker).by(speaker.model)
+
+    def _get_next_statement(self, *, index, speaker, conversation) -> Result:
+        job = self._build_job(index=index, speaker=speaker, conversation=conversation)
+        run_kwargs = {} if self.cache is None else {"cache": self.cache}
+        results = job.run(**run_kwargs)
+        return results[0]
+
+    def converse(self, max_retries: int = 3, retry_delay: float = 5.0) -> None:
+        i = 0
+        while self._should_continue():
+            speaker = self.next_speaker()
+            last_exc = None
+            for attempt in range(max_retries):
+                try:
+                    result = self._get_next_statement(
+                        index=i,
+                        speaker=speaker,
+                        conversation=self.agent_statements.transcript,
+                    )
+                    last_exc = None
+                    break
+                except Exception as e:
+                    msg = str(e)
+                    # Only retry on transient server/network errors
+                    if any(x in msg for x in ("503", "502", "504", "ConnectionError", "connection", "reset", "timeout")):
+                        last_exc = e
+                        if self.verbose:
+                            print(f"Transient error on attempt {attempt + 1}/{max_retries}: {e}")
+                        time.sleep(retry_delay)
+                    else:
+                        raise
+            if last_exc is not None:
+                raise RuntimeError(f"Failed after {max_retries} retries: {last_exc}") from last_exc
+            next_statement = AgentStatement(statement=result)
+            self.agent_statements.append(next_statement)
+            if self.verbose:
+                print(f"'{speaker.name}': {next_statement.text}")
+            i += 1
 
     def to_dict(self):
         return {
@@ -176,137 +212,59 @@ What do you say next?"""
     @classmethod
     def from_dict(cls, data):
         agent_list = AgentList.from_dict(data["agent_list"])
-        max_turns = data["max_turns"]
-        verbose = data["verbose"]
-        agent_statements = (AgentStatements.from_dict(data["agent_statements"]),)
-        conversation_index = data["conversation_index"]
         return cls(
             agent_list=agent_list,
-            max_turns=max_turns,
-            verbose=verbose,
-            results_data=agent_statements,
-            conversation_index=conversation_index,
+            max_turns=data["max_turns"],
+            verbose=data["verbose"],
+            conversation_index=data["conversation_index"],
         )
 
-    def to_results(self):
+    def to_results(self) -> Results:
         return Results(data=[s.statement for s in self.agent_statements])
 
-    def summarize(self):
-        d = {
-            "num_agents": len(self.agent_list),
-            "max_turns": self.max_turns,
-            "conversation_index": self.conversation_index,
-            "transcript": self.to_results().select("agent_name", "dialogue").to_list(),
-            "number_of_agent_statements": len(self.agent_statements),
-        }
-        return Scenario(d)
-
-    async def get_next_statement(self, *, index, speaker, conversation) -> "Result":
-        """Get the next statement from the speaker."""
-        q = self.next_statement_question
-        from edsl import Scenario
-
-        if self.per_round_message_template is None:
-            round_message = None
-        else:
-            round_message = Template(self.per_round_message_template).render(
-                {"max_turns": self.max_turns, "current_turn": index}
-            )
-
-        s = Scenario(
+    def summarize(self) -> Scenario:
+        return Scenario(
             {
-                "agent_name": speaker.name,
-                "conversation": conversation,
+                "num_agents": len(self.agent_list),
+                "max_turns": self.max_turns,
                 "conversation_index": self.conversation_index,
-                "index": index,
-                "round_message": round_message,
+                "transcript": self.to_results().select("agent.agent_name", "answer.dialogue").to_list(),
+                "number_of_agent_statements": len(self.agent_statements),
             }
         )
-        jobs = q.by(s).by(speaker).by(speaker.model)
-        jobs.show_prompts()
-        results = await jobs.run_async(
-            cache=self.cache, disable_remote_inference=self.disable_remote_inference
-        )
-        return results[0]
-
-    def converse(self):
-        return asyncio.run(self._converse())
-
-    async def _converse(self):
-        i = 0
-        while await self.continue_conversation():
-            speaker = self.next_speaker()
-
-            max_retries = 5
-            delay = 2
-            attempt = 0
-            result_statement = None
-            success = False
-
-            while attempt < max_retries:
-                try:
-                    result_statement = await self.get_next_statement(
-                        index=i,
-                        speaker=speaker,
-                        conversation=self.agent_statements.transcript,
-                    )
-                    success = True
-                    break
-                except Exception as e:
-                    attempt += 1
-                    if self.verbose:
-                        print(f"Agent {speaker.name} failed (Attempt {attempt}/{max_retries}): {e}")
-
-                    if attempt >= max_retries:
-                        raise Exception(
-                            f"Conversation crashed: Agent {speaker.name} failed after {max_retries} retries. Error: {e}"
-                        )
-
-                    await asyncio.sleep(delay)
-
-            if success and result_statement:
-                next_statement = AgentStatement(statement=result_statement)
-                self.agent_statements.append(next_statement)
-                if self.verbose:
-                    print(f"'{speaker.name}': {next_statement.text}")
-                i += 1
 
 
 class ConversationList:
-    """A collection of conversations to be run in parallel."""
+    """Runs multiple conversations in parallel using threads.
 
-    def __init__(self, conversations: list[Conversation], cache=None):
+    Each conversation blocks on its own fetch() calls, so they proceed
+    independently without a shared event loop.
+    """
+
+    def __init__(self, conversations: list[Conversation]):
         self.conversations = conversations
         for i, conversation in enumerate(self.conversations):
             conversation.add_index(i)
 
-        if cache is None:
-            self.cache = Cache()
-        else:
-            self.cache = cache
-
-        for c in self.conversations:
-            c.cache = self.cache
-
-    async def run_conversations(self):
-        await asyncio.gather(*[c._converse() for c in self.conversations])
-
     def run(self) -> None:
-        """Run all conversations in parallel"""
-        asyncio.run(self.run_conversations())
+        threads = [
+            threading.Thread(target=c.converse, daemon=True)
+            for c in self.conversations
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
 
     def to_dict(self) -> dict:
-        return {"conversations": c.to_dict() for c in self.conversations}
+        return {"conversations": [c.to_dict() for c in self.conversations]}
 
     @classmethod
     def from_dict(cls, data):
-        conversations = [Conversation.from_dict(d) for d in data["conversations"]]
-        return cls(conversations)
+        return cls([Conversation.from_dict(d) for d in data["conversations"]])
 
     def to_results(self) -> Results:
-        """Return the results of all conversations as a single Results"""
-        first_convo = self.conversations[0]
-        results = first_convo.to_results()
+        results = self.conversations[0].to_results()
         for conv in self.conversations[1:]:
             results += conv.to_results()
         return results

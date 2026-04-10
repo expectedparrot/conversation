@@ -1,4 +1,4 @@
-from edsl import Agent, AgentList, QuestionFreeText, Cache, QuestionList
+from edsl import Agent, AgentList, QuestionFreeText, QuestionList
 from conversation import Conversation, ConversationList
 
 a1 = Agent(
@@ -28,8 +28,7 @@ a3 = Agent(
 c1 = Conversation(agent_list=AgentList([a1, a3, a2]), max_turns=5, verbose=True)
 c2 = Conversation(agent_list=AgentList([a1, a2]), max_turns=5, verbose=True)
 
-c = Cache()
-combo = ConversationList([c1, c2], cache=c)
+combo = ConversationList([c1, c2])
 combo.run()
 results = combo.to_results()
 results.select("conversation_index", "index", "agent_name", "dialogue").print(

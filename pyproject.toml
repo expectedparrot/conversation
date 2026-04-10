@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=61"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "conversation"
@@ -9,7 +9,6 @@ description = "Simulate multi-agent conversations using EDSL"
 requires-python = ">=3.10"
 dependencies = [
     "edsl",
-    "jinja2",
 ]
 
 [tool.setuptools.packages.find]
