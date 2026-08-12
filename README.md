@@ -86,7 +86,11 @@ Because turns block on network I/O (waiting for Coop), the GIL is released and t
 
 ### Retry behaviour
 
-`converse()` retries only on transient network/server errors (HTTP 502, 503, 504, connection resets, timeouts). Application-level errors propagate immediately. Defaults: 3 retries, 5 second delay.
+`converse()` retries only on typed connection/timeout failures and structured HTTP
+502, 503, or 504 responses. Application-level errors propagate immediately.
+Defaults: 3 total attempts and a 5 second delay between attempts. The original
+exception is re-raised after exhaustion, and there is no delay after the final
+attempt.
 
 ```python
 c.converse(max_retries=5, retry_delay=10.0)

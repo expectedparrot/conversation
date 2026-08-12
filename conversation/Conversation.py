@@ -7,6 +7,7 @@ from edsl import AgentList, QuestionFreeText, Results, Scenario, ScenarioList
 from edsl.questions import QuestionBase
 from edsl.results.result import Result
 from jinja2 import Template
+from requests import exceptions as requests_exceptions
 
 if TYPE_CHECKING:
     from edsl import Model
@@ -20,6 +21,30 @@ from .next_speaker_utilities import (
 
 def _is_non_negative_int(value) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+_TRANSIENT_HTTP_STATUSES = frozenset({502, 503, 504})
+_TRANSIENT_EXCEPTIONS = (
+    ConnectionError,
+    TimeoutError,
+    requests_exceptions.ConnectionError,
+    requests_exceptions.Timeout,
+)
+
+
+def _status_code_from_exception(exc: Exception) -> Optional[int]:
+    """Return a structured HTTP status carried by an exception, if present."""
+    status_code = getattr(exc, "status_code", None)
+    if status_code is not None:
+        return status_code
+    response = getattr(exc, "response", None)
+    return getattr(response, "status_code", None)
+
+
+def _is_transient_error(exc: Exception) -> bool:
+    return isinstance(exc, _TRANSIENT_EXCEPTIONS) or (
+        _status_code_from_exception(exc) in _TRANSIENT_HTTP_STATUSES
+    )
 
 
 class AgentStatement:
@@ -201,7 +226,6 @@ What do you say next?"""
         i = 0
         while self._should_continue():
             speaker = self.next_speaker()
-            last_exc = None
             for attempt in range(max_retries):
                 try:
                     result = self._get_next_statement(
@@ -209,20 +233,23 @@ What do you say next?"""
                         speaker=speaker,
                         conversation=self.agent_statements.transcript,
                     )
-                    last_exc = None
                     break
-                except Exception as e:
-                    msg = str(e)
-                    # Only retry on transient server/network errors
-                    if any(x in msg for x in ("503", "502", "504", "ConnectionError", "connection", "reset", "timeout")):
-                        last_exc = e
-                        if self.verbose:
-                            print(f"Transient error on attempt {attempt + 1}/{max_retries}: {e}")
-                        time.sleep(retry_delay)
-                    else:
+                except Exception as exc:
+                    if not _is_transient_error(exc):
                         raise
-            if last_exc is not None:
-                raise RuntimeError(f"Failed after {max_retries} retries: {last_exc}") from last_exc
+                    if attempt == max_retries - 1:
+                        if hasattr(exc, "add_note"):
+                            exc.add_note(
+                                f"Conversation turn {i} failed after "
+                                f"{max_retries} attempts"
+                            )
+                        raise
+                    if self.verbose:
+                        print(
+                            f"Transient error on attempt "
+                            f"{attempt + 1}/{max_retries}: {exc}"
+                        )
+                    time.sleep(retry_delay)
             next_statement = AgentStatement(statement=result)
             self.agent_statements.append(next_statement)
             if self.verbose:

@@ -1,6 +1,7 @@
 import importlib
 
 import pytest
+import requests
 from conftest import make_result
 
 from conversation import Conversation
@@ -95,7 +96,7 @@ def test_non_transient_error_is_not_retried(agents, monkeypatch):
     assert attempts == 1
 
 
-def test_transient_errors_are_wrapped_after_retry_exhaustion(agents, monkeypatch):
+def test_transient_error_is_preserved_after_retry_exhaustion(agents, monkeypatch):
     conversation = Conversation(agent_list=agents, max_turns=1)
     attempts = 0
 
@@ -106,13 +107,55 @@ def test_transient_errors_are_wrapped_after_retry_exhaustion(agents, monkeypatch
 
     monkeypatch.setattr(conversation, "_get_next_statement", broken_turn)
     conversation_module = importlib.import_module("conversation.Conversation")
-    monkeypatch.setattr(conversation_module.time, "sleep", lambda delay: None)
+    delays = []
+    monkeypatch.setattr(conversation_module.time, "sleep", delays.append)
 
-    with pytest.raises(RuntimeError, match="Failed after 2 retries") as exc_info:
+    with pytest.raises(TimeoutError, match="timeout") as exc_info:
         conversation.converse(max_retries=2)
 
     assert attempts == 2
-    assert isinstance(exc_info.value.__cause__, TimeoutError)
+    assert delays == [5.0]
+    assert any("turn 0" in note for note in getattr(exc_info.value, "__notes__", []))
+
+
+@pytest.mark.parametrize("status_code", [502, 503, 504])
+def test_structured_server_status_is_retried(agents, monkeypatch, status_code):
+    conversation = Conversation(agent_list=agents, max_turns=1)
+    attempts = 0
+
+    def flaky_turn(*, index, speaker, conversation):
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            response = requests.Response()
+            response.status_code = status_code
+            raise requests.HTTPError("server unavailable", response=response)
+        return make_result(speaker, "recovered", index)
+
+    monkeypatch.setattr(conversation, "_get_next_statement", flaky_turn)
+    conversation_module = importlib.import_module("conversation.Conversation")
+    monkeypatch.setattr(conversation_module.time, "sleep", lambda delay: None)
+
+    conversation.converse(max_retries=2)
+
+    assert attempts == 2
+
+
+def test_error_message_does_not_make_error_retryable(agents, monkeypatch):
+    conversation = Conversation(agent_list=agents, max_turns=1)
+    attempts = 0
+
+    def broken_turn(**kwargs):
+        nonlocal attempts
+        attempts += 1
+        raise ValueError("connection timeout with status 503")
+
+    monkeypatch.setattr(conversation, "_get_next_statement", broken_turn)
+
+    with pytest.raises(ValueError, match="connection timeout"):
+        conversation.converse(max_retries=3, retry_delay=0)
+
+    assert attempts == 1
 
 
 def test_to_results_and_summary_use_completed_statements(agents, monkeypatch):

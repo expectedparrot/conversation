@@ -9,6 +9,7 @@ description = "Simulate multi-agent conversations using EDSL"
 requires-python = ">=3.10"
 dependencies = [
     "edsl",
+    "requests>=2",
 ]
 
 [project.optional-dependencies]
