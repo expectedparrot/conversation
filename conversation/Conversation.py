@@ -11,10 +11,15 @@ from jinja2 import Template
 if TYPE_CHECKING:
     from edsl import Model
 
+from .exceptions import ConversationValueError
 from .next_speaker_utilities import (
     default_turn_taking_generator,
     speaker_closure,
 )
+
+
+def _is_non_negative_int(value) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 class AgentStatement:
@@ -75,6 +80,13 @@ class Conversation:
         cache=None,
         default_model: Optional["Model"] = None,
     ):
+        if not isinstance(agent_list, AgentList):
+            raise ConversationValueError("agent_list must be an AgentList")
+        if len(agent_list) == 0:
+            raise ConversationValueError("agent_list must contain at least one agent")
+        if not _is_non_negative_int(max_turns):
+            raise ConversationValueError("max_turns must be a non-negative integer")
+
         self.cache = cache
         self.per_round_message_template = per_round_message_template
         self.agent_list = agent_list
@@ -107,11 +119,14 @@ What do you say next?"""
             )
         else:
             self.next_statement_question = next_statement_question
+            if next_statement_question.question_name != "dialogue":
+                raise ConversationValueError(
+                    "next_statement_question must have question_name='dialogue'"
+                )
             if (
                 per_round_message_template
                 and "{{ round_message }}" not in next_statement_question.question_text
             ):
-                from .exceptions import ConversationValueError
                 raise ConversationValueError(
                     "If you pass in a per_round_message_template, you must include {{ round_message }} in the question_text."
                 )
@@ -170,6 +185,19 @@ What do you say next?"""
         return results[0]
 
     def converse(self, max_retries: int = 3, retry_delay: float = 5.0) -> None:
+        if (
+            not isinstance(max_retries, int)
+            or isinstance(max_retries, bool)
+            or max_retries < 1
+        ):
+            raise ConversationValueError("max_retries must be a positive integer")
+        if (
+            not isinstance(retry_delay, (int, float))
+            or isinstance(retry_delay, bool)
+            or retry_delay < 0
+        ):
+            raise ConversationValueError("retry_delay must be a non-negative number")
+
         i = 0
         while self._should_continue():
             speaker = self.next_speaker()
@@ -224,12 +252,19 @@ What do you say next?"""
         return Results(data=[s.statement for s in self.agent_statements])
 
     def summarize(self) -> Scenario:
+        transcript = (
+            self.to_results()
+            .select("agent.agent_name", "answer.dialogue")
+            .to_list()
+            if self.agent_statements
+            else []
+        )
         return Scenario(
             {
                 "num_agents": len(self.agent_list),
                 "max_turns": self.max_turns,
                 "conversation_index": self.conversation_index,
-                "transcript": self.to_results().select("agent.agent_name", "answer.dialogue").to_list(),
+                "transcript": transcript,
                 "number_of_agent_statements": len(self.agent_statements),
             }
         )
@@ -243,6 +278,12 @@ class ConversationList:
     """
 
     def __init__(self, conversations: list[Conversation]):
+        if not isinstance(conversations, list):
+            raise ConversationValueError("conversations must be a list")
+        if not all(isinstance(c, Conversation) for c in conversations):
+            raise ConversationValueError(
+                "conversations must contain only Conversation objects"
+            )
         self.conversations = conversations
         for i, conversation in enumerate(self.conversations):
             conversation.add_index(i)
@@ -258,6 +299,13 @@ class ConversationList:
             RuntimeError: If a conversation fails. The original exception is
                 retained as the cause and the message identifies its index.
         """
+        if max_workers is not None and (
+            not isinstance(max_workers, int)
+            or isinstance(max_workers, bool)
+            or max_workers < 1
+        ):
+            raise ConversationValueError("max_workers must be a positive integer")
+
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_conversation = {
                 executor.submit(conversation.converse): conversation
@@ -282,6 +330,8 @@ class ConversationList:
         return cls([Conversation.from_dict(d) for d in data["conversations"]])
 
     def to_results(self) -> Results:
+        if not self.conversations:
+            return Results(data=[])
         results = self.conversations[0].to_results()
         for conv in self.conversations[1:]:
             results += conv.to_results()

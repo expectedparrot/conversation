@@ -111,6 +111,10 @@ Conversation(
 )
 ```
 
+`agent_list` must be a non-empty `AgentList`, and `max_turns` must be a
+non-negative integer. One-agent conversations are supported by every built-in
+turn-taking strategy. Custom questions must use `question_name="dialogue"`.
+
 #### Methods
 
 | Method | Description |
@@ -168,6 +172,9 @@ c = Conversation(agent_list=..., next_statement_question=q)
 ```python
 ConversationList(conversations)   # list of Conversation objects
 ```
+
+An empty `ConversationList` is valid and produces empty results and summaries.
+Pass a positive integer to `run(max_workers=...)` to bound concurrency.
 
 | Method | Description |
 |--------|-------------|

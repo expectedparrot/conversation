@@ -1,8 +1,16 @@
 import random
 
+from .exceptions import ConversationValueError
+
+
+def _validate_agents(agent_list):
+    if len(agent_list) == 0:
+        raise ConversationValueError("agent_list must contain at least one agent")
+
 
 def default_turn_taking_generator(agent_list, speakers_so_far, **kwargs):
     """Returns the next speaker in the list of agents, in order. If no speakers have spoken yet, returns the first agent in the list."""
+    _validate_agents(agent_list)
     if len(speakers_so_far) == 0:
         return agent_list[0]
     most_recent_speaker = speakers_so_far[-1]
@@ -16,7 +24,16 @@ def turn_taking_generator_with_focal_speaker(
     """Returns the focal speaker first, then the next speaker in the list of agents sequentially, going back to the focal speaker after the last agent has spoken. If no speakers have spoken yet, returns the focal speaker.
     This would be appropriate for say, a an auction where the auctioneer always speaks first, and then the next person in line speaks, and then the auctioneer speaks again.
     """
-    if len(speakers_so_far) == 0:
+    _validate_agents(agent_list)
+    if (
+        not isinstance(focal_speaker_index, int)
+        or isinstance(focal_speaker_index, bool)
+        or not 0 <= focal_speaker_index < len(agent_list)
+    ):
+        raise ConversationValueError(
+            "focal_speaker_index must identify an agent in agent_list"
+        )
+    if len(agent_list) == 1 or len(speakers_so_far) == 0:
         return agent_list[focal_speaker_index]
 
     most_recent_speaker = speakers_so_far[-1]
@@ -37,6 +54,9 @@ def turn_taking_generator_with_focal_speaker(
 def random_turn_taking_generator(agent_list, speakers_so_far, **kwargs):
     """Returns a random speaker from the list of agents, but ensuring no agent speaks twice in a row.
     If no speakers have spoken yet, returns a random agent."""
+    _validate_agents(agent_list)
+    if len(agent_list) == 1:
+        return agent_list[0]
     if len(speakers_so_far) == 0:
         return random.choice(agent_list)
     else:
@@ -48,6 +68,9 @@ def random_inclusive_generator(agent_list, speakers_so_far, **kwargs):
     """Returns a random speaker from the list of agents, but ensuring no agent speaks twice in a row and that
     every agent has spoken before the same agent speaks again.
     """
+    _validate_agents(agent_list)
+    if len(agent_list) == 1:
+        return agent_list[0]
     if len(speakers_so_far) > 0:
         most_recent_speaker = speakers_so_far[-1]
     else:
@@ -70,6 +93,9 @@ def random_inclusive_generator(agent_list, speakers_so_far, **kwargs):
 
 
 def speaker_closure(agent_list, generator_function, focal_speaker_index=None):
+    _validate_agents(agent_list)
+    if not callable(generator_function):
+        raise ConversationValueError("generator_function must be callable")
     speakers_so_far = []
     focal_speaker_index = focal_speaker_index
 
