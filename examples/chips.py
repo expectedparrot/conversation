@@ -1,6 +1,7 @@
 from typing import Optional
 
 from edsl import Agent, AgentList, Model
+
 from conversation import Conversation, ConversationList
 
 

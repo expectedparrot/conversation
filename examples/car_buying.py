@@ -1,4 +1,5 @@
 from edsl import Agent, AgentList, QuestionFreeText, QuestionList
+
 from conversation import Conversation, ConversationList
 
 a1 = Agent(

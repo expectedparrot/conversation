@@ -6,22 +6,22 @@ conversation flow between multiple participants.
 """
 
 from .Conversation import (
-    Conversation,
-    ConversationList,
     AgentStatement,
     AgentStatements,
+    Conversation,
+    ConversationList,
 )
 from .exceptions import (
     ConversationError,
-    ConversationValueError,
     ConversationStateError,
+    ConversationValueError,
 )
 from .next_speaker_utilities import (
     default_turn_taking_generator,
-    turn_taking_generator_with_focal_speaker,
-    random_turn_taking_generator,
     random_inclusive_generator,
+    random_turn_taking_generator,
     speaker_closure,
+    turn_taking_generator_with_focal_speaker,
 )
 
 __all__ = [

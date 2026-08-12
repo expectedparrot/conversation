@@ -1,8 +1,9 @@
-import threading
 import time
 from collections import UserList
-from typing import Optional, Callable, TYPE_CHECKING
-from edsl import QuestionFreeText, Results, AgentList, ScenarioList, Scenario
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import TYPE_CHECKING, Callable, Optional
+
+from edsl import AgentList, QuestionFreeText, Results, Scenario, ScenarioList
 from edsl.questions import QuestionBase
 from edsl.results.result import Result
 from jinja2 import Template
@@ -246,15 +247,32 @@ class ConversationList:
         for i, conversation in enumerate(self.conversations):
             conversation.add_index(i)
 
-    def run(self) -> None:
-        threads = [
-            threading.Thread(target=c.converse, daemon=True)
-            for c in self.conversations
-        ]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
+    def run(self, max_workers: Optional[int] = None) -> None:
+        """Run conversations concurrently and propagate worker failures.
+
+        Args:
+            max_workers: Maximum number of conversations to run at once. When
+                omitted, ``ThreadPoolExecutor`` chooses its standard default.
+
+        Raises:
+            RuntimeError: If a conversation fails. The original exception is
+                retained as the cause and the message identifies its index.
+        """
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_conversation = {
+                executor.submit(conversation.converse): conversation
+                for conversation in self.conversations
+            }
+            for future in as_completed(future_to_conversation):
+                conversation = future_to_conversation[future]
+                try:
+                    future.result()
+                except Exception as exc:
+                    for pending in future_to_conversation:
+                        pending.cancel()
+                    raise RuntimeError(
+                        f"Conversation {conversation.conversation_index} failed"
+                    ) from exc
 
     def to_dict(self) -> dict:
         return {"conversations": [c.to_dict() for c in self.conversations]}

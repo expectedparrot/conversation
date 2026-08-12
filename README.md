@@ -6,7 +6,9 @@ A standalone package for simulating multi-agent conversations using [EDSL](https
 
 Each conversation is a sequence of turns between EDSL `Agent` objects. At every turn, the current speaker is asked a `QuestionFreeText` whose prompt contains the conversation history so far. The answer becomes the next statement, and the cycle continues until a turn limit or stopping condition is reached.
 
-Multiple conversations can be run in parallel via `ConversationList`, which uses threads — one per conversation. Each thread blocks independently on its own Coop jobs, so many conversations make progress simultaneously without requiring an async event loop.
+Multiple conversations can be run in parallel via `ConversationList`, which uses a
+bounded thread pool. Each worker blocks independently on its own Coop jobs, so many
+conversations make progress simultaneously without requiring an async event loop.
 
 ## Installation
 
@@ -67,15 +69,16 @@ You can replace the entire prompt by passing a custom `QuestionFreeText` (or any
 
 ### Parallelism
 
-`ConversationList` spawns one `threading.Thread` per conversation and calls `c.converse()` in each:
+`ConversationList` submits conversations to a `ThreadPoolExecutor`:
 
 ```python
-threads = [threading.Thread(target=c.converse, daemon=True) for c in self.conversations]
-for t in threads: t.start()
-for t in threads: t.join()
+with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    futures = [executor.submit(c.converse) for c in self.conversations]
+    for future in as_completed(futures):
+        future.result()
 ```
 
-Because turns block on network I/O (waiting for Coop), the GIL is released and threads make real concurrent progress. While conversation A is waiting for turn 3, conversation B is already waiting for its turn 3 on a different Coop job. No `asyncio` event loop is needed.
+Because turns block on network I/O (waiting for Coop), the GIL is released and threads make real concurrent progress. While conversation A is waiting for turn 3, conversation B is already waiting for its turn 3 on a different Coop job. No `asyncio` event loop is needed. Worker failures propagate from `run()` with the failed conversation index and original exception attached as the cause.
 
 ### Why not asyncio?
 
@@ -168,7 +171,7 @@ ConversationList(conversations)   # list of Conversation objects
 
 | Method | Description |
 |--------|-------------|
-| `run()` | Run all conversations in parallel (blocks until all finish) |
+| `run(max_workers=None)` | Run conversations concurrently, optionally bounding the worker count |
 | `to_results()` | Concatenate results from all conversations into one `Results` |
 | `summarize()` | Return a `ScenarioList` of per-conversation summaries |
 | `to_dict()` / `from_dict()` | Serialization |
@@ -235,6 +238,20 @@ See the `examples/` directory:
 - `car_buying.py` — three-agent conversation (buyer, salesman, skeptical brother-in-law) run in parallel
 - `mug_negotiation.py` — bilateral bargaining across multiple valuation pairs with post-hoc deal analysis
 - `chips.py` — chip-trading negotiation using a custom `Agent` subclass with internal state
+
+## Development
+
+Install the package with its test dependencies and run the offline suite:
+
+```bash
+python -m pip install -e ".[test]"
+python -m ruff check .
+python -m pytest
+```
+
+Tests marked `integration` require external credentials and are excluded by default.
+Run them explicitly with `python -m pytest -m integration` after configuring the
+required model-provider credentials.
 
 ## Package structure
 

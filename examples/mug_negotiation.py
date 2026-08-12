@@ -1,4 +1,5 @@
-from edsl import Agent, AgentList, QuestionYesNo, QuestionNumerical
+from edsl import Agent, AgentList, QuestionNumerical, QuestionYesNo
+
 from conversation import Conversation, ConversationList
 
 
