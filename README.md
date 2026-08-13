@@ -128,6 +128,12 @@ turn-taking strategy. Custom questions must use `question_name="dialogue"`.
 | `summarize()` | Return a `Scenario` with transcript and metadata, suitable for follow-up analysis |
 | `to_dict()` / `from_dict()` | Serialization |
 
+Serialization uses a versioned dictionary format and preserves agents, accumulated
+statements, question configuration, round-message templates, and conversation
+metadata. Custom stopping functions and speaker-generator callables are rejected
+explicitly because arbitrary Python callables cannot be restored faithfully. Cache
+objects are runtime-only and are not serialized.
+
 #### `stopping_function`
 
 Called after each turn with the current `AgentStatements`. Return `True` to end the conversation early:

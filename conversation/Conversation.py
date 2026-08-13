@@ -92,6 +92,8 @@ class Conversation:
     is required.
     """
 
+    SERIALIZATION_VERSION = 1
+
     def __init__(
         self,
         agent_list: AgentList,
@@ -129,6 +131,7 @@ class Conversation:
                     agent.model = Model()
 
         if next_statement_question is None:
+            self._uses_default_question = True
             import textwrap
             base_question = textwrap.dedent(
                 """\
@@ -143,6 +146,7 @@ What do you say next?"""
                 question_name="dialogue",
             )
         else:
+            self._uses_default_question = False
             self.next_statement_question = next_statement_question
             if next_statement_question.question_name != "dialogue":
                 raise ConversationValueError(
@@ -160,14 +164,17 @@ What do you say next?"""
             func = default_turn_taking_generator
         else:
             func = next_speaker_generator
+        self._speaker_generator_function = func
 
         self.next_speaker = speaker_closure(
             agent_list=self.agent_list, generator_function=func
         )
 
         if stopping_function is None:
+            self._uses_default_stopping_function = True
             self.stopping_function = lambda agent_statements: False
         else:
+            self._uses_default_stopping_function = False
             self.stopping_function = stopping_function
 
     def _should_continue(self) -> bool:
@@ -257,23 +264,49 @@ What do you say next?"""
             i += 1
 
     def to_dict(self):
+        if not self._uses_default_stopping_function:
+            raise ConversationValueError(
+                "Conversations with a custom stopping_function cannot be serialized"
+            )
+        if self._speaker_generator_function is not default_turn_taking_generator:
+            raise ConversationValueError(
+                "Conversations with a custom next_speaker_generator cannot be serialized"
+            )
         return {
+            "serialization_version": self.SERIALIZATION_VERSION,
             "agent_list": self.agent_list.to_dict(),
             "max_turns": self.max_turns,
             "verbose": self.verbose,
             "agent_statements": [d.to_dict() for d in self.agent_statements],
             "conversation_index": self.conversation_index,
+            "next_statement_question": self.next_statement_question.to_dict(),
+            "per_round_message_template": self.per_round_message_template,
         }
 
     @classmethod
     def from_dict(cls, data):
+        version = data.get("serialization_version", 0)
+        if version not in (0, cls.SERIALIZATION_VERSION):
+            raise ConversationValueError(
+                f"Unsupported conversation serialization version: {version}"
+            )
         agent_list = AgentList.from_dict(data["agent_list"])
-        return cls(
+        question_data = data.get("next_statement_question")
+        question = (
+            QuestionBase.from_dict(question_data) if question_data is not None else None
+        )
+        conversation = cls(
             agent_list=agent_list,
             max_turns=data["max_turns"],
-            verbose=data["verbose"],
-            conversation_index=data["conversation_index"],
+            verbose=data.get("verbose", False),
+            conversation_index=data.get("conversation_index"),
+            next_statement_question=question,
+            per_round_message_template=data.get("per_round_message_template"),
         )
+        conversation.agent_statements = AgentStatements.from_dict(
+            data.get("agent_statements", [])
+        )
+        return conversation
 
     def to_results(self) -> Results:
         return Results(data=[s.statement for s in self.agent_statements])
