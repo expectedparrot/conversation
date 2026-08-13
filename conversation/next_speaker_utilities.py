@@ -92,11 +92,13 @@ def random_inclusive_generator(agent_list, speakers_so_far, **kwargs):
     return random.choice(eligible_agents)
 
 
-def speaker_closure(agent_list, generator_function, focal_speaker_index=None):
+def speaker_closure(
+    agent_list, generator_function, focal_speaker_index=None, speakers_so_far=None
+):
     _validate_agents(agent_list)
     if not callable(generator_function):
         raise ConversationValueError("generator_function must be callable")
-    speakers_so_far = []
+    speakers_so_far = list(speakers_so_far or [])
     focal_speaker_index = focal_speaker_index
 
     def next_speaker_generator():

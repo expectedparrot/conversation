@@ -4,7 +4,12 @@ import pytest
 from conftest import make_result
 from edsl import QuestionFreeText
 
-from conversation import Conversation, ConversationList, ConversationValueError
+from conversation import (
+    AgentStatement,
+    Conversation,
+    ConversationList,
+    ConversationValueError,
+)
 
 
 def completed_conversation(agents, monkeypatch):
@@ -105,3 +110,23 @@ def test_serialized_data_does_not_alias_statement_data(agents, monkeypatch):
     data["agent_statements"].clear()
 
     assert len(restored.agent_statements) == 2
+
+
+def test_restored_partial_conversation_resumes_turn_and_speaker(agents, monkeypatch):
+    original = Conversation(agent_list=agents, max_turns=3)
+    original.agent_statements.append(
+        AgentStatement(make_result(agents[0], "first", 0))
+    )
+
+    restored = Conversation.from_dict(original.to_dict())
+    observed = []
+
+    def fake_turn(*, index, speaker, conversation):
+        observed.append((index, speaker.name))
+        return make_result(speaker, f"turn {index}", index)
+
+    monkeypatch.setattr(restored, "_get_next_statement", fake_turn)
+    restored.converse()
+
+    assert observed == [(1, "Bob"), (2, "Alice")]
+    assert len(restored.agent_statements) == 3

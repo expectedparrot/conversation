@@ -24,6 +24,50 @@ def test_converse_runs_to_max_turns_in_round_robin_order(agents, monkeypatch):
     ]
 
 
+def test_repeated_converse_continues_with_stable_indices(agents, monkeypatch):
+    conversation = Conversation(
+        agent_list=agents,
+        max_turns=3,
+        stopping_function=lambda statements: len(statements) in {1, 3},
+    )
+    observed = []
+
+    def fake_turn(*, index, speaker, conversation):
+        observed.append((index, speaker.name))
+        return make_result(speaker, f"turn {index}", index)
+
+    monkeypatch.setattr(conversation, "_get_next_statement", fake_turn)
+
+    conversation.converse()
+    conversation.stopping_function = lambda statements: False
+    conversation.converse()
+    conversation.converse()
+
+    assert observed == [(0, "Alice"), (1, "Bob"), (2, "Alice")]
+
+
+def test_reset_restarts_transcript_indices_and_speaker_order(agents, monkeypatch):
+    conversation = Conversation(agent_list=agents, max_turns=2)
+    observed = []
+
+    def fake_turn(*, index, speaker, conversation):
+        observed.append((index, speaker.name))
+        return make_result(speaker, f"turn {index}", index)
+
+    monkeypatch.setattr(conversation, "_get_next_statement", fake_turn)
+    conversation.converse()
+    conversation.reset()
+    conversation.converse()
+
+    assert observed == [
+        (0, "Alice"),
+        (1, "Bob"),
+        (0, "Alice"),
+        (1, "Bob"),
+    ]
+    assert len(conversation.agent_statements) == 2
+
+
 def test_stopping_function_can_stop_after_a_turn(agents, monkeypatch):
     conversation = Conversation(
         agent_list=agents,

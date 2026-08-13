@@ -12,7 +12,7 @@ from requests import exceptions as requests_exceptions
 if TYPE_CHECKING:
     from edsl import Model
 
-from .exceptions import ConversationValueError
+from .exceptions import ConversationStateError, ConversationValueError
 from .next_speaker_utilities import (
     default_turn_taking_generator,
     speaker_closure,
@@ -166,9 +166,7 @@ What do you say next?"""
             func = next_speaker_generator
         self._speaker_generator_function = func
 
-        self.next_speaker = speaker_closure(
-            agent_list=self.agent_list, generator_function=func
-        )
+        self._reset_speaker_state()
 
         if stopping_function is None:
             self._uses_default_stopping_function = True
@@ -181,6 +179,38 @@ What do you say next?"""
         if len(self.agent_statements) >= self.max_turns:
             return False
         return not self.stopping_function(self.agent_statements)
+
+    def _speaker_history(self):
+        """Resolve completed statement speakers to this conversation's agents."""
+        agents_by_name = {}
+        for agent in self.agent_list:
+            agents_by_name.setdefault(agent.name, []).append(agent)
+
+        history = []
+        for statement in self.agent_statements:
+            matches = agents_by_name.get(statement.agent_name, [])
+            if not matches:
+                raise ConversationStateError(
+                    f"Statement speaker {statement.agent_name!r} is not in agent_list"
+                )
+            if len(matches) > 1:
+                raise ConversationStateError(
+                    "Cannot restore speaker state when agent names are duplicated"
+                )
+            history.append(matches[0])
+        return history
+
+    def _reset_speaker_state(self) -> None:
+        self.next_speaker = speaker_closure(
+            agent_list=self.agent_list,
+            generator_function=self._speaker_generator_function,
+            speakers_so_far=self._speaker_history(),
+        )
+
+    def reset(self) -> None:
+        """Clear completed turns and restart the speaker strategy at turn zero."""
+        self.agent_statements = AgentStatements()
+        self._reset_speaker_state()
 
     def add_index(self, index) -> None:
         self._conversation_index = index
@@ -230,7 +260,10 @@ What do you say next?"""
         ):
             raise ConversationValueError("retry_delay must be a non-negative number")
 
-        i = 0
+        # Rebuild closure state from successful turns. This also discards a speaker
+        # selection made by a previous failed invocation of converse().
+        self._reset_speaker_state()
+        i = len(self.agent_statements)
         while self._should_continue():
             speaker = self.next_speaker()
             for attempt in range(max_retries):
@@ -306,6 +339,7 @@ What do you say next?"""
         conversation.agent_statements = AgentStatements.from_dict(
             data.get("agent_statements", [])
         )
+        conversation._reset_speaker_state()
         return conversation
 
     def to_results(self) -> Results:

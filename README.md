@@ -124,9 +124,15 @@ turn-taking strategy. Custom questions must use `question_name="dialogue"`.
 | Method | Description |
 |--------|-------------|
 | `converse(max_retries=3, retry_delay=5.0)` | Run the conversation to completion |
+| `reset()` | Clear completed turns and restart at turn zero |
 | `to_results()` | Return all statements as an EDSL `Results` object |
 | `summarize()` | Return a `Scenario` with transcript and metadata, suitable for follow-up analysis |
 | `to_dict()` / `from_dict()` | Serialization |
+
+Calling `converse()` again continues from the existing transcript until `max_turns`
+is reached; calling it after completion is a no-op. Restored conversations resume
+with the next stable turn index and, for the serializable default strategy, the same
+speaker order as uninterrupted execution. Call `reset()` to start over explicitly.
 
 Serialization uses a versioned dictionary format and preserves agents, accumulated
 statements, question configuration, round-message templates, and conversation
