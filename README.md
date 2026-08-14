@@ -218,6 +218,22 @@ from conversation.next_speaker_utilities import random_inclusive_generator
 c = Conversation(agent_list=..., next_speaker_generator=random_inclusive_generator)
 ```
 
+For configurable, reproducible, and serializable turn taking, prefer the explicit
+strategy classes:
+
+```python
+from conversation import FocalSpeakerStrategy, RandomSpeakerStrategy
+
+focal = FocalSpeakerStrategy(focal_speaker_index=0)
+seeded_random = RandomSpeakerStrategy(seed=42)
+
+c = Conversation(agent_list=..., next_speaker_generator=seeded_random)
+```
+
+Strategies expose their `speakers_so_far` state and support `reset(history)`. The
+legacy generator functions and arbitrary callables remain supported, but arbitrary
+callables cannot be serialized.
+
 ### Working with results
 
 After a conversation runs, `to_results()` returns a standard EDSL `Results` object:

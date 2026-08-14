@@ -9,6 +9,7 @@ from conversation import (
     Conversation,
     ConversationList,
     ConversationValueError,
+    RandomSpeakerStrategy,
 )
 
 
@@ -56,6 +57,18 @@ def test_custom_question_round_trips(agents):
     restored = Conversation.from_dict(conversation.to_dict())
 
     assert restored.next_statement_question.question_text == question.question_text
+
+
+def test_builtin_speaker_strategy_round_trips(agents):
+    conversation = Conversation(
+        agent_list=agents,
+        next_speaker_generator=RandomSpeakerStrategy(seed=123),
+    )
+
+    restored = Conversation.from_dict(conversation.to_dict())
+
+    assert isinstance(restored.speaker_strategy, RandomSpeakerStrategy)
+    assert restored.speaker_strategy.seed == 123
 
 
 def test_conversation_list_round_trips(agents, monkeypatch):

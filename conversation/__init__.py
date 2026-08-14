@@ -17,6 +17,11 @@ from .exceptions import (
     ConversationValueError,
 )
 from .next_speaker_utilities import (
+    FocalSpeakerStrategy,
+    RandomInclusiveStrategy,
+    RandomSpeakerStrategy,
+    RoundRobinStrategy,
+    SpeakerStrategy,
     default_turn_taking_generator,
     random_inclusive_generator,
     random_turn_taking_generator,
@@ -37,4 +42,9 @@ __all__ = [
     "random_turn_taking_generator",
     "random_inclusive_generator",
     "speaker_closure",
+    "SpeakerStrategy",
+    "RoundRobinStrategy",
+    "FocalSpeakerStrategy",
+    "RandomSpeakerStrategy",
+    "RandomInclusiveStrategy",
 ]

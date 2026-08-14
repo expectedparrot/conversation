@@ -14,8 +14,10 @@ if TYPE_CHECKING:
 
 from .exceptions import ConversationStateError, ConversationValueError
 from .next_speaker_utilities import (
+    CallableSpeakerStrategy,
+    RoundRobinStrategy,
+    SpeakerStrategy,
     default_turn_taking_generator,
-    speaker_closure,
 )
 
 
@@ -161,10 +163,14 @@ What do you say next?"""
                 )
 
         if next_speaker_generator is None:
-            func = default_turn_taking_generator
+            strategy = RoundRobinStrategy()
+        elif isinstance(next_speaker_generator, SpeakerStrategy):
+            strategy = next_speaker_generator
+        elif next_speaker_generator is default_turn_taking_generator:
+            strategy = RoundRobinStrategy()
         else:
-            func = next_speaker_generator
-        self._speaker_generator_function = func
+            strategy = CallableSpeakerStrategy(next_speaker_generator)
+        self.speaker_strategy = strategy
 
         self._reset_speaker_state()
 
@@ -201,11 +207,10 @@ What do you say next?"""
         return history
 
     def _reset_speaker_state(self) -> None:
-        self.next_speaker = speaker_closure(
-            agent_list=self.agent_list,
-            generator_function=self._speaker_generator_function,
-            speakers_so_far=self._speaker_history(),
-        )
+        self.speaker_strategy.reset(self._speaker_history())
+
+    def next_speaker(self):
+        return self.speaker_strategy.next_speaker(self.agent_list)
 
     def reset(self) -> None:
         """Clear completed turns and restart the speaker strategy at turn zero."""
@@ -303,10 +308,6 @@ What do you say next?"""
             raise ConversationValueError(
                 "Conversations with a custom stopping_function cannot be serialized"
             )
-        if self._speaker_generator_function is not default_turn_taking_generator:
-            raise ConversationValueError(
-                "Conversations with a custom next_speaker_generator cannot be serialized"
-            )
         return {
             "serialization_version": self.SERIALIZATION_VERSION,
             "agent_list": self.agent_list.to_dict(),
@@ -316,6 +317,7 @@ What do you say next?"""
             "conversation_index": self.conversation_index,
             "next_statement_question": self.next_statement_question.to_dict(),
             "per_round_message_template": self.per_round_message_template,
+            "speaker_strategy": self.speaker_strategy.to_dict(),
         }
 
     @classmethod
@@ -330,6 +332,12 @@ What do you say next?"""
         question = (
             QuestionBase.from_dict(question_data) if question_data is not None else None
         )
+        strategy_data = data.get("speaker_strategy")
+        strategy = (
+            SpeakerStrategy.from_dict(strategy_data)
+            if strategy_data is not None
+            else RoundRobinStrategy()
+        )
         conversation = cls(
             agent_list=agent_list,
             max_turns=data["max_turns"],
@@ -337,6 +345,7 @@ What do you say next?"""
             conversation_index=data.get("conversation_index"),
             next_statement_question=question,
             per_round_message_template=data.get("per_round_message_template"),
+            next_speaker_generator=strategy,
         )
         conversation.agent_statements = AgentStatements.from_dict(
             data.get("agent_statements", [])
