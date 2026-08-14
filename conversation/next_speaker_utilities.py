@@ -1,5 +1,6 @@
 import random
 from abc import ABC, abstractmethod
+from typing import ClassVar
 
 from .exceptions import ConversationValueError
 
@@ -12,7 +13,7 @@ def _validate_agents(agent_list):
 class SpeakerStrategy(ABC):
     """Explicit, resettable state for selecting conversation speakers."""
 
-    strategy_name = None
+    strategy_name: ClassVar[str | None] = None
 
     def __init__(self):
         self.speakers_so_far = []

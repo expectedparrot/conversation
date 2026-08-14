@@ -1,22 +1,42 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "conversation"
-version = "0.1.0"
+version = "0.2.0"
 description = "Simulate multi-agent conversations using EDSL"
+readme = "README.md"
 requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{name = "Expected Parrot, Inc."}]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
 dependencies = [
-    "edsl",
+    "edsl>=1.0.8,<2",
+    "jinja2>=3.1,<4",
     "requests>=2",
 ]
+
+[project.urls]
+Homepage = "https://github.com/expectedparrot/conversation"
+Repository = "https://github.com/expectedparrot/conversation"
+Issues = "https://github.com/expectedparrot/conversation/issues"
 
 [project.optional-dependencies]
 test = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
     "ruff>=0.12",
+    "build>=1.2",
+    "mypy>=1.11",
 ]
 
 [tool.pytest.ini_options]
@@ -33,6 +53,11 @@ line-length = 88
 [tool.ruff.lint]
 select = ["E", "F", "I"]
 ignore = ["E501"]
+
+[tool.mypy]
+python_version = "3.10"
+check_untyped_defs = true
+ignore_missing_imports = true
 
 [tool.setuptools.packages.find]
 where = ["."]

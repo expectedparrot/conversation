@@ -114,7 +114,7 @@ class Conversation:
         max_turns: int = 20,
         stopping_function: Optional[Callable] = None,
         next_statement_question: Optional[QuestionBase] = None,
-        next_speaker_generator: Optional[Callable] = None,
+        next_speaker_generator: Optional[Callable | SpeakerStrategy] = None,
         verbose: bool = False,
         per_round_message_template: Optional[str] = None,
         conversation_index: Optional[int] = None,
@@ -181,6 +181,7 @@ What do you say next?"""
                     "If you pass in a per_round_message_template, you must include {{ round_message }} in the question_text."
                 )
 
+        strategy: SpeakerStrategy
         if next_speaker_generator is None:
             strategy = RoundRobinStrategy()
         elif isinstance(next_speaker_generator, SpeakerStrategy):
@@ -223,7 +224,7 @@ What do you say next?"""
 
     def _speaker_history(self):
         """Resolve completed statement speakers to this conversation's agents."""
-        agents_by_name = {}
+        agents_by_name: dict[str, list] = {}
         for agent in self.agent_list:
             agents_by_name.setdefault(agent.name, []).append(agent)
 
@@ -327,8 +328,8 @@ What do you say next?"""
                     if not _is_transient_error(exc):
                         raise
                     if attempt == max_retries - 1:
-                        exc.conversation_turn = i
-                        exc.conversation_attempts = max_retries
+                        setattr(exc, "conversation_turn", i)
+                        setattr(exc, "conversation_attempts", max_retries)
                         if hasattr(exc, "add_note"):
                             exc.add_note(
                                 f"Conversation turn {i} failed after "

@@ -37,20 +37,24 @@ class ChipLover(Agent):
         )
 
 
-a1 = ChipLover(
-    name="Alice",
-    chip_values={"Green": 7, "Blue": 1, "Red": 0},
-    model=Model("gemini-2.0-flash"),
-    initial_chips={"Green": 1, "Blue": 2, "Red": 3},
-)
-a2 = ChipLover(
-    name="Bob",
-    chip_values={"Green": 7, "Blue": 1, "Red": 0},
-    model=Model("gemini-2.0-flash"),
-    initial_chips={"Green": 1, "Blue": 2, "Red": 3},
-)
+def main():
+    a1 = ChipLover(
+        name="Alice",
+        chip_values={"Green": 7, "Blue": 1, "Red": 0},
+        model=Model("gemini-2.0-flash"),
+        initial_chips={"Green": 1, "Blue": 2, "Red": 3},
+    )
+    a2 = ChipLover(
+        name="Bob",
+        chip_values={"Green": 7, "Blue": 1, "Red": 0},
+        model=Model("gemini-2.0-flash"),
+        initial_chips={"Green": 1, "Blue": 2, "Red": 3},
+    )
+    conversation = Conversation(
+        agent_list=AgentList([a1, a2]), max_turns=2, verbose=True
+    )
+    ConversationList([conversation]).run()
 
-c1 = Conversation(agent_list=AgentList([a1, a2]), max_turns=2, verbose=True)
 
-combo = ConversationList([c1])
-combo.run()
+if __name__ == "__main__":
+    main()

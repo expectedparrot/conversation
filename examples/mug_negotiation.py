@@ -37,13 +37,6 @@ cl = ConversationList(
         for v in valuations
     ]
 )
-cl.run()
-results = cl.to_results()
-
-results.select("conversation_index", "index", "agent_name", "dialogue").print(
-    format="rich"
-)
-
 q_deal = QuestionYesNo(
     question_text="""This was a negotiation: {{ transcript }}.
                      Was a deal reached?
@@ -68,8 +61,19 @@ q_side_deal = QuestionYesNo(
 survey = (
     q_deal.add_question(q_price)
     .add_question(q_side_deal)
-    .add_stop_rule("deal", "deal == 'No'")
+    .add_stop_rule("deal", "{{ deal.answer }} == 'No'")
 )
 
-transcript_analysis = survey.by(cl.summarize()).run()
-transcript_analysis.select("deal", "price", "side_deal").print(format="rich")
+
+def main():
+    cl.run()
+    results = cl.to_results()
+    results.select("conversation_index", "index", "agent_name", "dialogue").print(
+        format="rich"
+    )
+    transcript_analysis = survey.by(cl.summarize()).run()
+    transcript_analysis.select("deal", "price", "side_deal").print(format="rich")
+
+
+if __name__ == "__main__":
+    main()

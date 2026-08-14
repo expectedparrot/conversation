@@ -297,7 +297,9 @@ Install the package with its test dependencies and run the offline suite:
 ```bash
 python -m pip install -e ".[test]"
 python -m ruff check .
+python -m mypy conversation
 python -m pytest
+python -m build
 ```
 
 Tests marked `integration` require external credentials and are excluded by default.
