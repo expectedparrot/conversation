@@ -278,6 +278,8 @@ What do you say next?"""
                     if not _is_transient_error(exc):
                         raise
                     if attempt == max_retries - 1:
+                        exc.conversation_turn = i
+                        exc.conversation_attempts = max_retries
                         if hasattr(exc, "add_note"):
                             exc.add_note(
                                 f"Conversation turn {i} failed after "

@@ -159,7 +159,8 @@ def test_transient_error_is_preserved_after_retry_exhaustion(agents, monkeypatch
 
     assert attempts == 2
     assert delays == [5.0]
-    assert any("turn 0" in note for note in getattr(exc_info.value, "__notes__", []))
+    assert exc_info.value.conversation_turn == 0
+    assert exc_info.value.conversation_attempts == 2
 
 
 @pytest.mark.parametrize("status_code", [502, 503, 504])
