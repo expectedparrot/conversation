@@ -6,7 +6,9 @@ A standalone package for simulating multi-agent conversations using [EDSL](https
 
 Each conversation is a sequence of turns between EDSL `Agent` objects. At every turn, the current speaker is asked a `QuestionFreeText` whose prompt contains the conversation history so far. The answer becomes the next statement, and the cycle continues until a turn limit or stopping condition is reached.
 
-Multiple conversations can be run in parallel via `ConversationList`, which uses threads — one per conversation. Each thread blocks independently on its own Coop jobs, so many conversations make progress simultaneously without requiring an async event loop.
+Multiple conversations can be run in parallel via `ConversationList`, which uses a
+bounded thread pool. Each worker blocks independently on its own Coop jobs, so many
+conversations make progress simultaneously without requiring an async event loop.
 
 ## Installation
 
@@ -61,29 +63,44 @@ You are {{ speaker_name }}. This is the conversation so far: {{ conversation }}
 What do you say next?
 ```
 
-`{{ conversation }}` is a list of `{speaker_name: text}` dicts representing the transcript so far. `{{ round_message }}` is an optional per-round injection (see `per_round_message_template`).
+`{{ conversation }}` is a list of transcript records with `turn`, `speaker`,
+`speaker_index`, and `text` fields. `{{ round_message }}` is an optional per-round
+injection (see `per_round_message_template`).
 
 You can replace the entire prompt by passing a custom `QuestionFreeText` (or any `QuestionBase`) as `next_statement_question`. The question must use `question_name="dialogue"` so that `AgentStatement.text` can find the answer.
 
 ### Parallelism
 
-`ConversationList` spawns one `threading.Thread` per conversation and calls `c.converse()` in each:
+`ConversationList` submits conversations to a `ThreadPoolExecutor`:
 
 ```python
-threads = [threading.Thread(target=c.converse, daemon=True) for c in self.conversations]
-for t in threads: t.start()
-for t in threads: t.join()
+with ThreadPoolExecutor(max_workers=max_workers) as executor:
+    futures = [executor.submit(c.converse) for c in self.conversations]
+    for future in as_completed(futures):
+        future.result()
 ```
 
-Because turns block on network I/O (waiting for Coop), the GIL is released and threads make real concurrent progress. While conversation A is waiting for turn 3, conversation B is already waiting for its turn 3 on a different Coop job. No `asyncio` event loop is needed.
+Because turns block on network I/O (waiting for Coop), the GIL is released and threads make real concurrent progress. While conversation A is waiting for turn 3, conversation B is already waiting for its turn 3 on a different Coop job. No `asyncio` event loop is needed. Worker failures propagate from `run()` with the failed conversation index and original exception attached as the cause.
 
 ### Why not asyncio?
 
-`job.run()` is synchronous and uses `poll_remote_inference_job` internally, which correctly handles both the `results_uuid` and `results_available` response paths from Coop. The async alternative (`run_async` / `results.fetch()`) is missing the `results_available` fallback and fails silently on some accounts. Threads give equivalent parallelism for the dozens-to-hundreds of conversations this module targets, with simpler code and no event loop management.
+The synchronous API remains the simplest default for scripts and uses a bounded
+thread pool for batches. Applications already running an event loop can instead use
+native `await conversation.converse_async()` and
+`await conversation_list.run_async(max_concurrency=...)`. These paths call EDSL's
+native `job.run_async()`; they do not hide threads or call `asyncio.run()`.
+
+The async API has offline coverage for state, retries, bounded concurrency, failure
+propagation, and cancellation. Remote-provider behavior remains covered by the
+opt-in integration test because it requires credentials.
 
 ### Retry behaviour
 
-`converse()` retries only on transient network/server errors (HTTP 502, 503, 504, connection resets, timeouts). Application-level errors propagate immediately. Defaults: 3 retries, 5 second delay.
+`converse()` retries only on typed connection/timeout failures and structured HTTP
+502, 503, or 504 responses. Application-level errors propagate immediately.
+Defaults: 3 total attempts and a 5 second delay between attempts. The original
+exception is re-raised after exhaustion, and there is no delay after the final
+attempt.
 
 ```python
 c.converse(max_retries=5, retry_delay=10.0)
@@ -108,18 +125,45 @@ Conversation(
 )
 ```
 
+`agent_list` must be a non-empty `AgentList`, and `max_turns` must be a
+non-negative integer. One-agent conversations are supported by every built-in
+turn-taking strategy. Custom questions must use `question_name="dialogue"`.
+
+Agents remain caller-owned: `Conversation` neither copies them nor attaches models
+to them. Model bindings are held per conversation and can be inspected with
+`model_for(agent)`. An agent's existing `model` takes precedence over
+`default_model`. Sharing immutable agents between conversations is supported, but
+mutable custom `Agent` subclasses should be instantiated separately for concurrent
+runs. Callers are likewise responsible for the thread safety of shared cache and
+model objects.
+
 #### Methods
 
 | Method | Description |
 |--------|-------------|
 | `converse(max_retries=3, retry_delay=5.0)` | Run the conversation to completion |
+| `converse_async(max_retries=3, retry_delay=5.0)` | Asynchronously run to completion |
+| `reset()` | Clear completed turns and restart at turn zero |
 | `to_results()` | Return all statements as an EDSL `Results` object |
 | `summarize()` | Return a `Scenario` with transcript and metadata, suitable for follow-up analysis |
 | `to_dict()` / `from_dict()` | Serialization |
 
+Calling `converse()` again continues from the existing transcript until `max_turns`
+is reached; calling it after completion is a no-op. Restored conversations resume
+with the next stable turn index and, for the serializable default strategy, the same
+speaker order as uninterrupted execution. Call `reset()` to start over explicitly.
+
+Serialization uses a versioned dictionary format and preserves agents, accumulated
+statements, question configuration, round-message templates, and conversation
+metadata. Custom stopping functions and speaker-generator callables are rejected
+explicitly because arbitrary Python callables cannot be restored faithfully. Cache
+objects are runtime-only and are not serialized.
+
 #### `stopping_function`
 
-Called after each turn with the current `AgentStatements`. Return `True` to end the conversation early:
+Called before each prospective turn—including before turn zero—with the current
+`AgentStatements`. Return `True` to prevent that turn. The `max_turns` check takes
+precedence, and predicate exceptions propagate to the caller:
 
 ```python
 def stop_on_deal(statements):
@@ -166,9 +210,13 @@ c = Conversation(agent_list=..., next_statement_question=q)
 ConversationList(conversations)   # list of Conversation objects
 ```
 
+An empty `ConversationList` is valid and produces empty results and summaries.
+Pass a positive integer to `run(max_workers=...)` to bound concurrency.
+
 | Method | Description |
 |--------|-------------|
-| `run()` | Run all conversations in parallel (blocks until all finish) |
+| `run(max_workers=None)` | Run conversations concurrently, optionally bounding the worker count |
+| `run_async(max_concurrency=None)` | Run with native asyncio concurrency |
 | `to_results()` | Concatenate results from all conversations into one `Results` |
 | `summarize()` | Return a `ScenarioList` of per-conversation summaries |
 | `to_dict()` / `from_dict()` | Serialization |
@@ -191,6 +239,22 @@ from conversation.next_speaker_utilities import random_inclusive_generator
 
 c = Conversation(agent_list=..., next_speaker_generator=random_inclusive_generator)
 ```
+
+For configurable, reproducible, and serializable turn taking, prefer the explicit
+strategy classes:
+
+```python
+from conversation import FocalSpeakerStrategy, RandomSpeakerStrategy
+
+focal = FocalSpeakerStrategy(focal_speaker_index=0)
+seeded_random = RandomSpeakerStrategy(seed=42)
+
+c = Conversation(agent_list=..., next_speaker_generator=seeded_random)
+```
+
+Strategies expose their `speakers_so_far` state and support `reset(history)`. The
+legacy generator functions and arbitrary callables remain supported, but arbitrary
+callables cannot be serialized.
 
 ### Working with results
 
@@ -235,6 +299,22 @@ See the `examples/` directory:
 - `car_buying.py` — three-agent conversation (buyer, salesman, skeptical brother-in-law) run in parallel
 - `mug_negotiation.py` — bilateral bargaining across multiple valuation pairs with post-hoc deal analysis
 - `chips.py` — chip-trading negotiation using a custom `Agent` subclass with internal state
+
+## Development
+
+Install the package with its test dependencies and run the offline suite:
+
+```bash
+python -m pip install -e ".[test]"
+python -m ruff check .
+python -m mypy conversation
+python -m pytest
+python -m build
+```
+
+Tests marked `integration` require external credentials and are excluded by default.
+Run them explicitly with `python -m pytest -m integration` after configuring the
+required model-provider credentials.
 
 ## Package structure
 

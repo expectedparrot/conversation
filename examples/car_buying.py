@@ -1,4 +1,5 @@
 from edsl import Agent, AgentList, QuestionFreeText, QuestionList
+
 from conversation import Conversation, ConversationList
 
 a1 = Agent(
@@ -26,15 +27,13 @@ a3 = Agent(
 )
 
 c1 = Conversation(agent_list=AgentList([a1, a3, a2]), max_turns=5, verbose=True)
-c2 = Conversation(agent_list=AgentList([a1, a2]), max_turns=5, verbose=True)
-
-combo = ConversationList([c1, c2])
-combo.run()
-results = combo.to_results()
-results.select("conversation_index", "index", "agent_name", "dialogue").print(
-    format="rich"
+c2 = Conversation(
+    agent_list=AgentList([a1.duplicate(), a2.duplicate()]),
+    max_turns=5,
+    verbose=True,
 )
 
+combo = ConversationList([c1, c2])
 q = QuestionFreeText(
     question_text="""This was a conversation about buying a car: {{ transcript }}.
                     Was a brand or style of car mentioned? If so, what was it?
@@ -49,5 +48,16 @@ q_actors = QuestionList(
     question_name="actors",
 )
 
-transcript_analysis = q.add_question(q_actors).by(combo.summarize()).run()
-transcript_analysis.select("car_brand", "actors").print(format="rich")
+
+def main():
+    combo.run()
+    results = combo.to_results()
+    results.select("conversation_index", "index", "agent_name", "dialogue").print(
+        format="rich"
+    )
+    transcript_analysis = q.add_question(q_actors).by(combo.summarize()).run()
+    transcript_analysis.select("car_brand", "actors").print(format="rich")
+
+
+if __name__ == "__main__":
+    main()
