@@ -10,6 +10,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 - Explicit, serializable speaker strategies with deterministic random seeds.
 - Resumable conversations and explicit reset semantics.
 - Stable identity-bearing transcript records.
+- Native async conversation and bounded batch APIs.
 
 ### Changed
 

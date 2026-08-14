@@ -84,7 +84,15 @@ Because turns block on network I/O (waiting for Coop), the GIL is released and t
 
 ### Why not asyncio?
 
-`job.run()` is synchronous and uses `poll_remote_inference_job` internally, which correctly handles both the `results_uuid` and `results_available` response paths from Coop. The async alternative (`run_async` / `results.fetch()`) is missing the `results_available` fallback and fails silently on some accounts. Threads give equivalent parallelism for the dozens-to-hundreds of conversations this module targets, with simpler code and no event loop management.
+The synchronous API remains the simplest default for scripts and uses a bounded
+thread pool for batches. Applications already running an event loop can instead use
+native `await conversation.converse_async()` and
+`await conversation_list.run_async(max_concurrency=...)`. These paths call EDSL's
+native `job.run_async()`; they do not hide threads or call `asyncio.run()`.
+
+The async API has offline coverage for state, retries, bounded concurrency, failure
+propagation, and cancellation. Remote-provider behavior remains covered by the
+opt-in integration test because it requires credentials.
 
 ### Retry behaviour
 
@@ -134,6 +142,7 @@ model objects.
 | Method | Description |
 |--------|-------------|
 | `converse(max_retries=3, retry_delay=5.0)` | Run the conversation to completion |
+| `converse_async(max_retries=3, retry_delay=5.0)` | Asynchronously run to completion |
 | `reset()` | Clear completed turns and restart at turn zero |
 | `to_results()` | Return all statements as an EDSL `Results` object |
 | `summarize()` | Return a `Scenario` with transcript and metadata, suitable for follow-up analysis |
@@ -207,6 +216,7 @@ Pass a positive integer to `run(max_workers=...)` to bound concurrency.
 | Method | Description |
 |--------|-------------|
 | `run(max_workers=None)` | Run conversations concurrently, optionally bounding the worker count |
+| `run_async(max_concurrency=None)` | Run with native asyncio concurrency |
 | `to_results()` | Concatenate results from all conversations into one `Results` |
 | `summarize()` | Return a `ScenarioList` of per-conversation summaries |
 | `to_dict()` / `from_dict()` | Serialization |

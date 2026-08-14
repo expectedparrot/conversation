@@ -1,3 +1,4 @@
+import asyncio
 import time
 from collections import UserList
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -296,7 +297,16 @@ What do you say next?"""
         results = job.run(**run_kwargs)
         return results[0]
 
-    def converse(self, max_retries: int = 3, retry_delay: float = 5.0) -> None:
+    async def _get_next_statement_async(
+        self, *, index, speaker, conversation
+    ) -> Result:
+        job = self._build_job(index=index, speaker=speaker, conversation=conversation)
+        run_kwargs = {} if self.cache is None else {"cache": self.cache}
+        results = await job.run_async(**run_kwargs)
+        return results[0]
+
+    @staticmethod
+    def _validate_run_options(max_retries, retry_delay):
         if (
             not isinstance(max_retries, int)
             or isinstance(max_retries, bool)
@@ -309,6 +319,24 @@ What do you say next?"""
             or retry_delay < 0
         ):
             raise ConversationValueError("retry_delay must be a non-negative number")
+
+    @staticmethod
+    def _annotate_exhausted_error(exc, turn, attempts):
+        setattr(exc, "conversation_turn", turn)
+        setattr(exc, "conversation_attempts", attempts)
+        if hasattr(exc, "add_note"):
+            exc.add_note(
+                f"Conversation turn {turn} failed after {attempts} attempts"
+            )
+
+    def _record_statement(self, speaker, result):
+        next_statement = AgentStatement(statement=result)
+        self.agent_statements.append(next_statement)
+        if self.verbose:
+            print(f"'{speaker.name}': {next_statement.text}")
+
+    def converse(self, max_retries: int = 3, retry_delay: float = 5.0) -> None:
+        self._validate_run_options(max_retries, retry_delay)
 
         # Rebuild closure state from successful turns. This also discards a speaker
         # selection made by a previous failed invocation of converse().
@@ -328,13 +356,7 @@ What do you say next?"""
                     if not _is_transient_error(exc):
                         raise
                     if attempt == max_retries - 1:
-                        setattr(exc, "conversation_turn", i)
-                        setattr(exc, "conversation_attempts", max_retries)
-                        if hasattr(exc, "add_note"):
-                            exc.add_note(
-                                f"Conversation turn {i} failed after "
-                                f"{max_retries} attempts"
-                            )
+                        self._annotate_exhausted_error(exc, i, max_retries)
                         raise
                     if self.verbose:
                         print(
@@ -342,10 +364,41 @@ What do you say next?"""
                             f"{attempt + 1}/{max_retries}: {exc}"
                         )
                     time.sleep(retry_delay)
-            next_statement = AgentStatement(statement=result)
-            self.agent_statements.append(next_statement)
-            if self.verbose:
-                print(f"'{speaker.name}': {next_statement.text}")
+            self._record_statement(speaker, result)
+            i += 1
+
+    async def converse_async(
+        self, max_retries: int = 3, retry_delay: float = 5.0
+    ) -> None:
+        """Asynchronously continue this conversation to completion."""
+        self._validate_run_options(max_retries, retry_delay)
+        self._reset_speaker_state()
+        i = len(self.agent_statements)
+        while self._should_continue():
+            speaker = self.next_speaker()
+            for attempt in range(max_retries):
+                try:
+                    result = await self._get_next_statement_async(
+                        index=i,
+                        speaker=speaker,
+                        conversation=self.transcript,
+                    )
+                    break
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    if not _is_transient_error(exc):
+                        raise
+                    if attempt == max_retries - 1:
+                        self._annotate_exhausted_error(exc, i, max_retries)
+                        raise
+                    if self.verbose:
+                        print(
+                            f"Transient error on attempt "
+                            f"{attempt + 1}/{max_retries}: {exc}"
+                        )
+                    await asyncio.sleep(retry_delay)
+            self._record_statement(speaker, result)
             i += 1
 
     def to_dict(self):
@@ -464,6 +517,39 @@ class ConversationList:
                     raise RuntimeError(
                         f"Conversation {conversation.conversation_index} failed"
                     ) from exc
+
+    async def run_async(self, max_concurrency: Optional[int] = None) -> None:
+        """Run conversations with native asyncio concurrency."""
+        if max_concurrency is not None and (
+            not isinstance(max_concurrency, int)
+            or isinstance(max_concurrency, bool)
+            or max_concurrency < 1
+        ):
+            raise ConversationValueError(
+                "max_concurrency must be a positive integer"
+            )
+        semaphore = asyncio.Semaphore(max_concurrency or max(1, len(self.conversations)))
+
+        async def run_one(conversation):
+            async with semaphore:
+                try:
+                    await conversation.converse_async()
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:
+                    raise RuntimeError(
+                        f"Conversation {conversation.conversation_index} failed"
+                    ) from exc
+
+        tasks = [asyncio.create_task(run_one(c)) for c in self.conversations]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                if not task.done():
+                    task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
 
     def to_dict(self) -> dict:
         return {"conversations": [c.to_dict() for c in self.conversations]}

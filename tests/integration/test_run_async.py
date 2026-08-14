@@ -1,17 +1,20 @@
-"""Credential-dependent EDSL async integration smoke test."""
+"""Credential-dependent Conversation async integration smoke test."""
 
 import pytest
-from edsl import Agent, Model, QuestionFreeText, Scenario
+from edsl import Agent, AgentList, Model
+
+from conversation import Conversation
 
 
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_run_async():
-    question = QuestionFreeText(question_text="Say hello", question_name="greeting")
     model = Model("gemini-2.0-flash", service_name="google")
     agent = Agent(name="TestAgent", traits={"role": "friendly"})
-    jobs = question.by(Scenario({"context": "test"})).by(agent).by(model)
+    conversation = Conversation(
+        agent_list=AgentList([agent]), max_turns=1, default_model=model
+    )
 
-    results = await jobs.run_async(disable_remote_inference=False)
+    await conversation.converse_async()
 
-    assert len(results) == 1
+    assert len(conversation.agent_statements) == 1
