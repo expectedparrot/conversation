@@ -68,6 +68,10 @@ class AgentStatement:
     def text(self):
         return self.statement["answer"]["dialogue"]
 
+    @property
+    def turn(self):
+        return self.statement["scenario"].get("index")
+
 
 class AgentStatements(UserList):
     def __init__(self, data=None):
@@ -75,6 +79,14 @@ class AgentStatements(UserList):
 
     @property
     def transcript(self):
+        return [
+            {"turn": s.turn, "speaker": s.agent_name, "text": s.text}
+            for s in self.data
+        ]
+
+    @property
+    def legacy_transcript(self):
+        """Return the pre-0.2 one-key-dictionary transcript shape."""
         return [{s.agent_name: s.text} for s in self.data]
 
     def to_dict(self):
@@ -113,6 +125,9 @@ class Conversation:
             raise ConversationValueError("agent_list must be an AgentList")
         if len(agent_list) == 0:
             raise ConversationValueError("agent_list must contain at least one agent")
+        agent_names = [agent.name for agent in agent_list]
+        if len(set(agent_names)) != len(agent_names):
+            raise ConversationValueError("agent names must be unique")
         if not _is_non_negative_int(max_turns):
             raise ConversationValueError("max_turns must be a non-negative integer")
 
@@ -189,6 +204,22 @@ What do you say next?"""
         if len(self.agent_statements) >= self.max_turns:
             return False
         return not self.stopping_function(self.agent_statements)
+
+    @property
+    def transcript(self):
+        """Return stable transcript records with participant identity."""
+        speaker_indices = {
+            agent.name: index for index, agent in enumerate(self.agent_list)
+        }
+        return [
+            {
+                "turn": statement.turn,
+                "speaker": statement.agent_name,
+                "speaker_index": speaker_indices[statement.agent_name],
+                "text": statement.text,
+            }
+            for statement in self.agent_statements
+        ]
 
     def _speaker_history(self):
         """Resolve completed statement speakers to this conversation's agents."""
@@ -289,7 +320,7 @@ What do you say next?"""
                     result = self._get_next_statement(
                         index=i,
                         speaker=speaker,
-                        conversation=self.agent_statements.transcript,
+                        conversation=self.transcript,
                     )
                     break
                 except Exception as exc:
@@ -370,19 +401,12 @@ What do you say next?"""
         return Results(data=[s.statement for s in self.agent_statements])
 
     def summarize(self) -> Scenario:
-        transcript = (
-            self.to_results()
-            .select("agent.agent_name", "answer.dialogue")
-            .to_list()
-            if self.agent_statements
-            else []
-        )
         return Scenario(
             {
                 "num_agents": len(self.agent_list),
                 "max_turns": self.max_turns,
                 "conversation_index": self.conversation_index,
-                "transcript": transcript,
+                "transcript": self.transcript,
                 "number_of_agent_statements": len(self.agent_statements),
             }
         )

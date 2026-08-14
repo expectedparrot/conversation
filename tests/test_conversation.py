@@ -17,10 +17,10 @@ def test_converse_runs_to_max_turns_in_round_robin_order(agents, monkeypatch):
     monkeypatch.setattr(conversation, "_get_next_statement", fake_turn)
     conversation.converse()
 
-    assert conversation.agent_statements.transcript == [
-        {"Alice": "turn 0"},
-        {"Bob": "turn 1"},
-        {"Alice": "turn 2"},
+    assert conversation.transcript == [
+        {"turn": 0, "speaker": "Alice", "speaker_index": 0, "text": "turn 0"},
+        {"turn": 1, "speaker": "Bob", "speaker_index": 1, "text": "turn 1"},
+        {"turn": 2, "speaker": "Alice", "speaker_index": 0, "text": "turn 2"},
     ]
 
 
@@ -220,7 +220,22 @@ def test_to_results_and_summary_use_completed_statements(agents, monkeypatch):
     assert len(results) == 2
     assert summary["conversation_index"] == 7
     assert summary["number_of_agent_statements"] == 2
-    assert summary["transcript"] == [("Alice", "answer 0"), ("Bob", "answer 1")]
+    assert summary["transcript"] == [
+        {"turn": 0, "speaker": "Alice", "speaker_index": 0, "text": "answer 0"},
+        {"turn": 1, "speaker": "Bob", "speaker_index": 1, "text": "answer 1"},
+    ]
+
+
+def test_legacy_transcript_remains_available(agents, monkeypatch):
+    conversation = Conversation(agent_list=agents, max_turns=1)
+    monkeypatch.setattr(
+        conversation,
+        "_get_next_statement",
+        lambda *, index, speaker, conversation: make_result(speaker, "hello", index),
+    )
+    conversation.converse()
+
+    assert conversation.agent_statements.legacy_transcript == [{"Alice": "hello"}]
 
 
 def test_round_message_is_rendered_into_job_scenario(agents):

@@ -23,6 +23,13 @@ def test_invalid_agent_list_is_rejected():
         Conversation(agent_list=[Agent(name="Alice")])
 
 
+def test_duplicate_agent_names_are_rejected():
+    with pytest.raises(ConversationValueError, match="unique"):
+        Conversation(
+            agent_list=AgentList([Agent(name="Alice"), Agent(name="Alice")])
+        )
+
+
 @pytest.mark.parametrize("max_retries", [0, -1, 1.5, True])
 def test_invalid_max_retries_is_rejected(agents, max_retries):
     conversation = Conversation(agent_list=agents, max_turns=0)

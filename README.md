@@ -63,7 +63,9 @@ You are {{ speaker_name }}. This is the conversation so far: {{ conversation }}
 What do you say next?
 ```
 
-`{{ conversation }}` is a list of `{speaker_name: text}` dicts representing the transcript so far. `{{ round_message }}` is an optional per-round injection (see `per_round_message_template`).
+`{{ conversation }}` is a list of transcript records with `turn`, `speaker`,
+`speaker_index`, and `text` fields. `{{ round_message }}` is an optional per-round
+injection (see `per_round_message_template`).
 
 You can replace the entire prompt by passing a custom `QuestionFreeText` (or any `QuestionBase`) as `next_statement_question`. The question must use `question_name="dialogue"` so that `AgentStatement.text` can find the answer.
 
@@ -150,7 +152,9 @@ objects are runtime-only and are not serialized.
 
 #### `stopping_function`
 
-Called after each turn with the current `AgentStatements`. Return `True` to end the conversation early:
+Called before each prospective turn—including before turn zero—with the current
+`AgentStatements`. Return `True` to prevent that turn. The `max_turns` check takes
+precedence, and predicate exceptions propagate to the caller:
 
 ```python
 def stop_on_deal(statements):
