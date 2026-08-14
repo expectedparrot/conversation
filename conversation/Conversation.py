@@ -124,13 +124,17 @@ class Conversation:
         self.agent_statements = AgentStatements()
         self.max_turns = max_turns
 
+        self._agent_models = {}
         for agent in self.agent_list:
-            if not hasattr(agent, "model"):
-                if default_model is not None:
-                    agent.model = default_model
-                else:
+            model = getattr(agent, "model", None)
+            if model is None:
+                if default_model is None:
                     from edsl import Model
-                    agent.model = Model()
+
+                    model = Model()
+                else:
+                    model = default_model
+            self._agent_models[id(agent)] = model
 
         if next_statement_question is None:
             self._uses_default_question = True
@@ -243,7 +247,16 @@ What do you say next?"""
                 "round_message": round_message,
             }
         )
-        return q.by(s).by(speaker).by(speaker.model)
+        return q.by(s).by(speaker).by(self.model_for(speaker))
+
+    def model_for(self, agent):
+        """Return this conversation's model binding without mutating the agent."""
+        try:
+            return self._agent_models[id(agent)]
+        except KeyError as exc:
+            raise ConversationValueError(
+                "agent does not belong to this conversation"
+            ) from exc
 
     def _get_next_statement(self, *, index, speaker, conversation) -> Result:
         job = self._build_job(index=index, speaker=speaker, conversation=conversation)

@@ -27,7 +27,11 @@ a3 = Agent(
 )
 
 c1 = Conversation(agent_list=AgentList([a1, a3, a2]), max_turns=5, verbose=True)
-c2 = Conversation(agent_list=AgentList([a1, a2]), max_turns=5, verbose=True)
+c2 = Conversation(
+    agent_list=AgentList([a1.duplicate(), a2.duplicate()]),
+    max_turns=5,
+    verbose=True,
+)
 
 combo = ConversationList([c1, c2])
 combo.run()

@@ -12,10 +12,11 @@ def agents():
 
 
 def make_result(agent, text, index=0):
+    model = getattr(agent, "model", None) or Model("test")
     return Result(
         agent=agent,
         scenario=Scenario({"index": index}),
-        model=agent.model,
+        model=model,
         iteration=0,
         answer={"dialogue": text},
     )

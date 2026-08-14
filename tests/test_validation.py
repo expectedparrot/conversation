@@ -87,3 +87,44 @@ def test_generators_reject_empty_agent_list(generator):
 def test_focal_generator_rejects_invalid_index(agents, index):
     with pytest.raises(ConversationValueError, match="focal_speaker_index"):
         turn_taking_generator_with_focal_speaker(agents, [], index)
+
+
+def test_conversation_does_not_attach_model_to_caller_agent():
+    agent = Agent(name="Alice")
+    assert not hasattr(agent, "model")
+
+    conversation = Conversation(agent_list=AgentList([agent]))
+
+    assert not hasattr(agent, "model")
+    assert conversation.model_for(agent) is not None
+
+
+def test_default_model_is_bound_without_mutating_agents():
+    from edsl import Model
+
+    agent = Agent(name="Alice")
+    model = Model("test")
+    conversation = Conversation(agent_list=AgentList([agent]), default_model=model)
+
+    assert conversation.model_for(agent) is model
+    assert not hasattr(agent, "model")
+
+
+def test_explicit_agent_model_takes_precedence():
+    from edsl import Model
+
+    agent = Agent(name="Alice")
+    agent.model = Model("test", canned_response="agent")
+    default = Model("test", canned_response="default")
+    conversation = Conversation(
+        agent_list=AgentList([agent]), default_model=default
+    )
+
+    assert conversation.model_for(agent) is agent.model
+
+
+def test_model_for_rejects_non_participant(agents):
+    conversation = Conversation(agent_list=agents)
+
+    with pytest.raises(ConversationValueError, match="does not belong"):
+        conversation.model_for(Agent(name="Outsider"))

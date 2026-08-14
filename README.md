@@ -119,6 +119,14 @@ Conversation(
 non-negative integer. One-agent conversations are supported by every built-in
 turn-taking strategy. Custom questions must use `question_name="dialogue"`.
 
+Agents remain caller-owned: `Conversation` neither copies them nor attaches models
+to them. Model bindings are held per conversation and can be inspected with
+`model_for(agent)`. An agent's existing `model` takes precedence over
+`default_model`. Sharing immutable agents between conversations is supported, but
+mutable custom `Agent` subclasses should be instantiated separately for concurrent
+runs. Callers are likewise responsible for the thread safety of shared cache and
+model objects.
+
 #### Methods
 
 | Method | Description |
